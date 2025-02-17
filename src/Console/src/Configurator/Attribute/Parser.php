@@ -8,6 +8,7 @@ use Spiral\Attributes\AttributeReader;
 use Spiral\Attributes\ReaderInterface;
 use Spiral\Console\Attribute\Argument;
 use Spiral\Console\Attribute\AsCommand;
+use Spiral\Console\Attribute\AsInput;
 use Spiral\Console\Attribute\Option;
 use Spiral\Console\Command;
 use Spiral\Console\Configurator\CommandDefinition;
@@ -40,10 +41,12 @@ final class Parser
             $attribute = $reflection->getAttributes(SymfonyAsCommand::class)[0]->newInstance();
         }
 
+        $parseSourceReflection = $this->getParseSource($reflection);
+
         return new CommandDefinition(
             name: $attribute->name,
-            arguments: $this->parseArguments($reflection),
-            options: $this->parseOptions($reflection),
+            arguments: $this->parseArguments($parseSourceReflection),
+            options: $this->parseOptions($parseSourceReflection),
             description: $attribute->description,
             help: $attribute instanceof AsCommand ? $attribute->help : null,
         );
@@ -81,6 +84,39 @@ final class Parser
                 }
             }
         }
+    }
+
+    /**
+     * Get the method that should be used to parse the command.
+     *
+     * This either can be the command itself, of the `#[AsInput]` parameter of the `perform` or `__invoke` method.
+     */
+    private function getParseSource(\ReflectionClass $reflection): \ReflectionClass
+    {
+        $method = $reflection->hasMethod('perform')
+            ? $reflection->getMethod('perform')
+            : ($reflection->hasMethod('__invoke')
+                ? $reflection->getMethod('__invoke')
+                : null);
+
+        if ($method === null) {
+            return $reflection;
+        }
+
+        $parameter = null;
+        foreach ($method->getParameters() as $param) {
+            $attribute = $this->reader->firstParameterMetadata($param, AsInput::class);
+            if ($attribute !== null) {
+                $parameter = $param;
+                break;
+            }
+        }
+
+        if ($parameter === null) {
+            return $reflection;
+        }
+
+        return new \ReflectionClass($parameter->getType()->getName());
     }
 
     private function parseArguments(\ReflectionClass $reflection): array

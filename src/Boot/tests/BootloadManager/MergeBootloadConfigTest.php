@@ -21,8 +21,18 @@ final class MergeBootloadConfigTest extends InitializerTestCase
         ]));
 
         self::assertEquals([
-            BootloaderF::class => ['bootloader' => new BootloaderF(), 'options' => []],
-            BootloaderD::class => ['bootloader' => new BootloaderD(), 'options' => []],
+            BootloaderF::class => [
+                'bootloader' => new BootloaderF(),
+                'options' => [],
+                'init_methods' => ['init'],
+                'boot_methods' => ['boot'],
+            ],
+            BootloaderD::class => [
+                'bootloader' => new BootloaderD(),
+                'options' => [],
+                'init_methods' => ['init'],
+                'boot_methods' => ['boot'],
+            ],
         ], $result);
     }
 
@@ -33,7 +43,12 @@ final class MergeBootloadConfigTest extends InitializerTestCase
         ]));
 
         self::assertEquals([
-            BootloaderG::class => ['bootloader' => new BootloaderG(), 'options' => ['foo' => 'bar']],
+            BootloaderG::class => [
+                'bootloader' => new BootloaderG(),
+                'options' => ['foo' => 'bar'],
+                'init_methods' => ['init'],
+                'boot_methods' => ['boot'],
+            ],
         ], $result);
     }
 
@@ -44,11 +59,16 @@ final class MergeBootloadConfigTest extends InitializerTestCase
         ]));
 
         self::assertEquals([
-            BootloaderG::class => ['bootloader' => new BootloaderG(), 'options' => [
-                'a' => 'baz',
-                'foo' => 'bar',
-                'c' => 'd',
-            ]],
+            BootloaderG::class => [
+                'bootloader' => new BootloaderG(),
+                'options' => [
+                    'a' => 'baz',
+                    'foo' => 'bar',
+                    'c' => 'd',
+                ],
+                'init_methods' => ['init'],
+                'boot_methods' => ['boot'],
+            ],
         ], $result);
     }
 

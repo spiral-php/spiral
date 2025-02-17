@@ -9,6 +9,8 @@ use Spiral\Attribute\DispatcherScope;
 use Spiral\Boot\Bootloader\BootloaderRegistry;
 use Spiral\Boot\Bootloader\BootloaderRegistryInterface;
 use Spiral\Boot\Bootloader\CoreBootloader;
+use Spiral\Boot\BootloadManager\AttributeResolver;
+use Spiral\Boot\BootloadManager\AttributeResolverRegistryInterface;
 use Spiral\Boot\BootloadManager\StrategyBasedBootloadManager;
 use Spiral\Boot\BootloadManager\DefaultInvokerStrategy;
 use Spiral\Boot\BootloadManager\Initializer;
@@ -119,9 +121,12 @@ abstract class AbstractKernel implements KernelInterface
             $exceptionHandler->register();
         }
 
+        $container->bind(AttributeResolverRegistryInterface::class, AttributeResolver::class);
+
         if (!$container->has(InitializerInterface::class)) {
             $container->bind(InitializerInterface::class, Initializer::class);
         }
+
         if (!$container->has(InvokerStrategyInterface::class)) {
             $container->bind(InvokerStrategyInterface::class, DefaultInvokerStrategy::class);
         }

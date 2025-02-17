@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Spiral\Boot\Attribute;
 
-use Spiral\Attributes\NamedArgumentConstructor;
-
-#[\Attribute(\Attribute::TARGET_CLASS), NamedArgumentConstructor]
+#[\Attribute(\Attribute::TARGET_CLASS)]
 class BootloadConfig
 {
     public function __construct(

@@ -26,26 +26,30 @@ final class DefaultInvokerStrategy implements InvokerStrategyInterface
         $bootloaders = \iterator_to_array($this->initializer->init($classes, $useConfig));
 
         foreach ($bootloaders as $data) {
-            $this->invokeBootloader($data['bootloader'], Methods::INIT, $data['options']);
+            foreach ($data['init_methods'] as $methodName) {
+                $this->invokeBootloader($data['bootloader'], $methodName, $data['options']);
+            }
         }
 
         $this->fireCallbacks($bootingCallbacks);
 
         foreach ($bootloaders as $data) {
-            $this->invokeBootloader($data['bootloader'], Methods::BOOT, $data['options']);
+            foreach ($data['boot_methods'] as $methodName) {
+                $this->invokeBootloader($data['bootloader'], $methodName, $data['options']);
+            }
         }
 
         $this->fireCallbacks($bootedCallbacks);
     }
 
-    private function invokeBootloader(BootloaderInterface $bootloader, Methods $method, array $options): void
+    private function invokeBootloader(BootloaderInterface $bootloader, string $method, array $options): void
     {
         $refl = new \ReflectionClass($bootloader);
-        if (!$refl->hasMethod($method->value)) {
+        if (!$refl->hasMethod($method)) {
             return;
         }
 
-        $method = $refl->getMethod($method->value);
+        $method = $refl->getMethod($method);
 
         $args = $this->resolver->resolveArguments($method);
         if (!isset($args['boot'])) {

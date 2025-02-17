@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Spiral\Boot\Bootloader;
 
+use Spiral\Core\Config\Binding;
+
 /**
  * Similar to laravel service provider, however allowed only to define bindings in a simple form so
  * they can be cached.
@@ -11,7 +13,7 @@ namespace Spiral\Boot\Bootloader;
  * To make class bootable (using method boot() with method injections) declare constant BOOT = true;
  *
  * @psalm-type TStaticBindingValue = class-string|non-empty-string|array{class-string, non-empty-string}
- * @psalm-type TContainerBindingValue = TStaticBindingValue|object|callable
+ * @psalm-type TContainerBindingValue = TStaticBindingValue|object|callable|Binding
  * @psalm-type TConstantBinding = array<class-string|non-empty-string, TStaticBindingValue>
  * @psalm-type TFullBinding = array<class-string|non-empty-string, TContainerBindingValue>
  */

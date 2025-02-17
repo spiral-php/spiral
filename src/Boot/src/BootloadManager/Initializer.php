@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Spiral\Boot\BootloadManager;
 
+use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\ContainerInterface;
+use Psr\Container\NotFoundExceptionInterface;
 use Spiral\Boot\Attribute\BootloadConfig;
+use Spiral\Boot\Attribute\BootMethod;
+use Spiral\Boot\Attribute\InitMethod;
 use Spiral\Boot\Bootloader\BootloaderInterface;
 use Spiral\Boot\Bootloader\DependedInterface;
 use Spiral\Boot\BootloadManager\Checker\BootloaderChecker;
@@ -40,6 +44,9 @@ class Initializer implements InitializerInterface
      * Instantiate bootloader objects and resolve dependencies
      *
      * @param TClass[]|array<class-string<BootloaderInterface>, array<string,mixed>> $classes
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     * @throws \ReflectionException
      */
     public function init(array $classes, bool $useConfig = true): \Generator
     {
@@ -63,11 +70,26 @@ class Initializer implements InitializerInterface
                 $bootloader = $this->container->get($bootloader);
             }
 
-            /** @var BootloaderInterface $bootloader */
-            yield from $this->initBootloader($bootloader);
+            $initMethods = $this->findMethodsWithPriority(
+                $bootloader,
+                [0 => [Methods::INIT->value]],
+                InitMethod::class,
+            );
+
+            $bootMethods = $this->findMethodsWithPriority(
+                $bootloader,
+                [0 => [Methods::BOOT->value]],
+                BootMethod::class,
+            );
+
+            yield from $this->resolveDependencies($bootloader, \array_unique([...$initMethods, ...$bootMethods]));
+
+            $this->initBootloader($bootloader);
             yield $bootloader::class => [
                 'bootloader' => $bootloader,
                 'options' => $options instanceof BootloadConfig ? $options->args : $options,
+                'init_methods' => $initMethods,
+                'boot_methods' => $bootMethods,
             ];
         }
     }
@@ -75,70 +97,6 @@ class Initializer implements InitializerInterface
     public function getRegistry(): ClassesRegistry
     {
         return $this->bootloaders;
-    }
-
-    /**
-     * Resolve all bootloader dependencies and init bindings
-     */
-    protected function initBootloader(BootloaderInterface $bootloader): iterable
-    {
-        if ($bootloader instanceof DependedInterface) {
-            yield from $this->init($this->getDependencies($bootloader));
-        }
-
-        $this->initBindings(
-            $bootloader->defineBindings(),
-            $bootloader->defineSingletons(),
-        );
-    }
-
-    /**
-     * Bind declared bindings.
-     *
-     * @param TFullBinding $bindings
-     * @param TFullBinding $singletons
-     */
-    protected function initBindings(array $bindings, array $singletons): void
-    {
-        foreach ($bindings as $aliases => $resolver) {
-            $this->binder->bind($aliases, $resolver);
-        }
-
-        foreach ($singletons as $aliases => $resolver) {
-            $this->binder->bindSingleton($aliases, $resolver);
-        }
-    }
-
-    protected function getDependencies(DependedInterface $bootloader): array
-    {
-        $deps = $bootloader->defineDependencies();
-
-        $reflectionClass = new \ReflectionClass($bootloader);
-
-        $methodsDeps = [];
-
-        foreach (Methods::cases() as $method) {
-            if ($reflectionClass->hasMethod($method->value)) {
-                $methodsDeps[] = $this->findBootloaderClassesInMethod(
-                    $reflectionClass->getMethod($method->value),
-                );
-            }
-        }
-
-        return \array_values(\array_unique(\array_merge($deps, ...$methodsDeps)));
-    }
-
-    protected function findBootloaderClassesInMethod(\ReflectionMethod $method): array
-    {
-        $args = [];
-        foreach ($method->getParameters() as $parameter) {
-            $type = $parameter->getType();
-            if ($type instanceof \ReflectionNamedType && $this->shouldBeBooted($type)) {
-                $args[] = $type->getName();
-            }
-        }
-
-        return $args;
     }
 
     protected function shouldBeBooted(\ReflectionNamedType $type): bool
@@ -170,9 +128,26 @@ class Initializer implements InitializerInterface
     }
 
     /**
-     * Returns merged config. Attribute config have lower priority.
+     * Resolve all bootloader dependencies and init bindings
+     */
+    private function initBootloader(BootloaderInterface $bootloader): void
+    {
+        foreach ($bootloader->defineBindings() as $alias => $resolver) {
+            $this->binder->bind($alias, $resolver);
+        }
+
+        foreach ($bootloader->defineSingletons() as $alias => $resolver) {
+            $this->binder->bindSingleton($alias, $resolver);
+        }
+
+        $this->resolveAttributeBindings($bootloader);
+    }
+
+    /**
+     * Returns merged config. Attribute config has lower priority.
      *
      * @param class-string<BootloaderInterface>|BootloaderInterface $bootloader
+     * @throws \ReflectionException
      */
     private function getBootloadConfig(
         string|BootloaderInterface $bootloader,
@@ -183,6 +158,7 @@ class Initializer implements InitializerInterface
                 ? $config(...$this->container->resolveArguments(new \ReflectionFunction($config)))
                 : $config();
         }
+
         $attr = $this->getBootloadConfigAttribute($bootloader);
 
         $getArgument = static fn(string $key, bool $override, mixed $default = []): mixed => match (true) {
@@ -205,7 +181,10 @@ class Initializer implements InitializerInterface
     }
 
     /**
+     * This method is used to find and instantiate BootloadConfig attribute.
+     *
      * @param class-string<BootloaderInterface>|BootloaderInterface $bootloader
+     * @throws \ReflectionException
      */
     private function getBootloadConfigAttribute(string|BootloaderInterface $bootloader): ?BootloadConfig
     {
@@ -220,5 +199,124 @@ class Initializer implements InitializerInterface
         }
 
         return $attribute->newInstance();
+    }
+
+    /**
+     * This method is used to find methods with InitMethod or BootMethod attributes.
+     *
+     * @param class-string<InitMethod|BootMethod> $attribute
+     * @param list<non-empty-string[]> $initialMethods
+     * @return list<non-empty-string>
+     */
+    private function findMethodsWithPriority(
+        BootloaderInterface $bootloader,
+        array $initialMethods,
+        string $attribute,
+    ): array {
+        $methods = $initialMethods;
+
+        $refl = new \ReflectionClass($bootloader);
+        foreach ($refl->getMethods() as $method) {
+            if ($method->isStatic()) {
+                continue;
+            }
+
+            $attrs = $method->getAttributes($attribute);
+            if (\count($attrs) === 0) {
+                continue;
+            }
+            /** @var InitMethod|BootMethod $attr */
+            $attr = $attrs[0]->newInstance();
+            $methods[$attr->priority][] = $method->getName();
+        }
+
+        \ksort($methods);
+
+        return \array_merge(...$methods);
+    }
+
+    /**
+     * This method is used to resolve bindings from attributes.
+     *
+     * @throws \ReflectionException
+     */
+    private function resolveAttributeBindings(BootloaderInterface $bootloader): void
+    {
+        if (!$this->container->has(AttributeResolver::class)) {
+            return;
+        }
+
+        /** @var AttributeResolver $attributeResolver */
+        $attributeResolver = $this->container->get(AttributeResolver::class);
+
+        $availableAttributes = $attributeResolver->getResolvers();
+
+        $refl = new \ReflectionClass($bootloader);
+        foreach ($refl->getMethods() as $method) {
+            if ($method->isStatic()) {
+                continue;
+            }
+
+            foreach ($availableAttributes as $attributeClass) {
+                $attrs = $method->getAttributes($attributeClass);
+                foreach ($attrs as $attr) {
+                    $instance = $attr->newInstance();
+                    $attributeResolver->resolve($instance, $bootloader, $method);
+                }
+            }
+        }
+    }
+
+    /**
+     * @param non-empty-string[] $bootloaderMethods
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     * @throws \ReflectionException
+     */
+    private function resolveDependencies(BootloaderInterface $bootloader, array $bootloaderMethods): iterable
+    {
+        $deps = $this->findDependenciesInMethods($bootloader, $bootloaderMethods);
+        if ($bootloader instanceof DependedInterface) {
+            $deps = [...$deps, ...$bootloader->defineDependencies()];
+        }
+
+        yield from $this->init(\array_values(\array_unique($deps)));
+    }
+
+    /**
+     * @param non-empty-string[] $methods
+     * @return class-string[]
+     */
+    private function findDependenciesInMethods(BootloaderInterface $bootloader, array $methods): array
+    {
+        $reflectionClass = new \ReflectionClass($bootloader);
+
+        $methodsDeps = [];
+
+        foreach ($methods as $method) {
+            if ($reflectionClass->hasMethod($method)) {
+                $methodsDeps[] = $this->findBootloaderClassesInMethod(
+                    $reflectionClass->getMethod($method),
+                );
+            }
+        }
+
+        return \array_merge(...$methodsDeps);
+    }
+
+    /**
+     * @return class-string[]
+     */
+    private function findBootloaderClassesInMethod(\ReflectionMethod $method): array
+    {
+        $args = [];
+        foreach ($method->getParameters() as $parameter) {
+            $type = $parameter->getType();
+            if ($type instanceof \ReflectionNamedType && $this->shouldBeBooted($type)) {
+                $args[] = $type->getName();
+            }
+        }
+
+        return $args;
     }
 }
